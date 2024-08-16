@@ -2,46 +2,23 @@
 const net = require("net");
 const express = require("express");
 const bodyParser = require("body-parser");
+const CommandType = require("./commandTypes");
 
 const app = express();
 app.use(bodyParser.json());
-
-const CommandType = {
-  CHECK_IN: "Q0",
-  HEARTBEAT: "H0",
-  UNLOCK: "L0",
-  LOCK: "L1",
-  REQUEST_POSITIONING: "D0",
-  LOCATION_TRACKING: "D1",
-  ACCESS_LOCK_INFO: "S5",
-  BIKE_SEARCH: "S8",
-  REQUEST_FIRMWARE_INFO: "G0",
-  ACTIVATE_ALARM: "W0",
-  START_UPGRADE: "U0",
-  REQUEST_UPGRADE_DATA: "U1",
-  UPGRADE_RESULTS_NOTIFICATION: "U2",
-  SET_GET_BLE_KEY: "K0",
-  OBTAIN_SIM_ICCID: "I0",
-  GET_BLUETOOTH_MAC: "M0",
-  SHUTDOWN: "S0",
-  REBOOT: "S1",
-  EXTERNAL_DEVICE_CONTROL: "L5",
-  GET_CABLE_LOCK_FIRMWARE_VERSION: "G1",
-  BEACON_VALIDATION: "B0",
-  RFID_CARD_UNLOCK_REQUEST: "C0",
-  MANAGEMENT_RFID_NUMBER_SETTING: "C1",
-  WIFI_POSITIONING: "D2",
-};
 
 const PORT = 8002;
 const API_PORT = 3001; // Port for the Express API
 
 const deviceSockets = new Map(); // Map to store device ID and socket connections
-const unlockPromises = new Map(); // Map to store promises for unlock commands
 
 // Create a TCP server
 const server = net.createServer((socket) => {
-  console.log("New connection established.");
+  console.log(
+    "New connection established:",
+    socket.remoteAddress,
+    socket.remotePort
+  );
 
   socket.on("data", (data) => {
     const command = data.toString().trim();
@@ -59,7 +36,7 @@ const server = net.createServer((socket) => {
   });
 
   socket.on("end", () => {
-    console.log("Connection ended.");
+    console.log("Connection ended:", socket.remoteAddress, socket.remotePort);
     // Remove the socket from the map when the connection ends
     for (const [deviceId, sock] of deviceSockets.entries()) {
       if (sock === socket) {
@@ -96,63 +73,6 @@ function handleIncomingData(command, socket) {
     case CommandType.REQUEST_POSITIONING:
       response = handleRequestPositioningResponse(parts);
       break;
-    case CommandType.LOCATION_TRACKING:
-      response = handleLocationTrackingResponse(parts);
-      break;
-    case CommandType.ACCESS_LOCK_INFO:
-      response = handleAccessLockInfoResponse(parts);
-      break;
-    case CommandType.BIKE_SEARCH:
-      response = handleBikeSearchResponse(parts);
-      break;
-    case CommandType.REQUEST_FIRMWARE_INFO:
-      response = handleRequestFirmwareInfoResponse(parts);
-      break;
-    case CommandType.ACTIVATE_ALARM:
-      response = handleActivateAlarmResponse(parts);
-      break;
-    case CommandType.START_UPGRADE:
-      response = handleStartUpgradeResponse(parts);
-      break;
-    case CommandType.REQUEST_UPGRADE_DATA:
-      response = handleRequestUpgradeDataResponse(parts);
-      break;
-    case CommandType.UPGRADE_RESULTS_NOTIFICATION:
-      response = handleUpgradeResultsNotification(parts);
-      break;
-    case CommandType.SET_GET_BLE_KEY:
-      response = handleSetGetBLEKeyResponse(parts);
-      break;
-    case CommandType.OBTAIN_SIM_ICCID:
-      response = handleObtainSIMICCIDResponse(parts);
-      break;
-    case CommandType.GET_BLUETOOTH_MAC:
-      response = handleGetBluetoothMACResponse(parts);
-      break;
-    case CommandType.SHUTDOWN:
-      response = handleShutdownResponse(parts);
-      break;
-    case CommandType.REBOOT:
-      response = handleRebootResponse(parts);
-      break;
-    case CommandType.EXTERNAL_DEVICE_CONTROL:
-      response = handleExternalDeviceControlResponse(parts);
-      break;
-    case CommandType.GET_CABLE_LOCK_FIRMWARE_VERSION:
-      response = handleGetCableLockFirmwareVersionResponse(parts);
-      break;
-    case CommandType.BEACON_VALIDATION:
-      response = handleBeaconValidationResponse(parts);
-      break;
-    case CommandType.RFID_CARD_UNLOCK_REQUEST:
-      response = handleRFIDCardUnlockRequest(parts);
-      break;
-    case CommandType.MANAGEMENT_RFID_NUMBER_SETTING:
-      response = handleManagementRFIDNumberSetting(parts);
-      break;
-    case CommandType.WIFI_POSITIONING:
-      response = handleWIFIPositioningResponse(parts);
-      break;
     default:
       console.log("Unknown action:", action);
   }
@@ -163,11 +83,11 @@ function handleIncomingData(command, socket) {
   }
 }
 
-function createCommand(deviceId, commandType, commandContent) {
+function createCommand(deviceId, commandType, commandContent = "") {
   const timestamp = new Date()
     .toISOString()
     .replace(/[-T:\.Z]/g, "")
-    .slice(0, 14); // Format: yyMMddHHmmss
+    .slice(2, 14); // Format: yyMMddHHmmss
   const startBit = "0xFFFF"; // Fixed start bit
   const header = "*CMDS"; // Fixed header
   const manufacturerCode = "OM"; // Fixed manufacturer code
@@ -175,7 +95,9 @@ function createCommand(deviceId, commandType, commandContent) {
   const newLine = "\n"; // New line character
 
   // Construct the command string
-  const command = `${startBit}${header},${manufacturerCode},${deviceId},${timestamp},${commandType},${commandContent}${endMarker}${newLine}`;
+  const command = `${startBit}${header},${manufacturerCode},${deviceId},${timestamp},${commandType}${
+    commandContent ? `,${commandContent}` : ""
+  }${endMarker}${newLine}`;
 
   return command;
 }
@@ -184,6 +106,15 @@ function createCommand(deviceId, commandType, commandContent) {
 function sendCommand(command, socket) {
   console.log(`Sending command to IoT lock: ${command}`);
   socket.write(command);
+}
+
+// Function to send a command to all connected devices
+function sendCommandToAllDevices(commandType, commandContent = "") {
+  for (const [deviceId, socket] of deviceSockets.entries()) {
+    const command = createCommand(deviceId, commandType, commandContent);
+    console.log(`Sending command to device ${deviceId}: ${command}`);
+    sendCommand(command, socket);
+  }
 }
 
 // Example command handlers
@@ -195,7 +126,7 @@ function handleCheckInResponse(parts) {
   // Log the voltage
   console.log(`Check-in command received. Battery voltage: ${voltage}%`);
 
-  // No response should be sent back to the IoT lock for the Q0 command
+  // No response should be sent back to the IoT lock for the Q0 command response
 }
 
 function handleHeartbeatResponse(parts) {
@@ -213,8 +144,7 @@ function handleHeartbeatResponse(parts) {
     }, Battery voltage: ${voltage}%, Signal strength: ${signalStrength}`
   );
 
-  // Return an empty string or any response if needed
-  return ""; // If no response is needed, return an empty string
+  // No response should be sent back to the IoT lock for the H0 command response
 }
 
 function handleUnlockResponse(parts) {
@@ -226,18 +156,8 @@ function handleUnlockResponse(parts) {
   console.log(
     `Unlock result: ${
       unlockResult === "0" ? "Success" : "Failure"
-    }, User ID: ${responseUserId}, Timestamp: ${responseTimestamp}`
+    }, User ID: ${responseUserId}, Timestamp: ${responseTimestamp}, Device ID: ${deviceId}`
   );
-
-  if (unlockPromises.has(deviceId)) {
-    const { resolve } = unlockPromises.get(deviceId);
-    if (resolve) {
-      resolve(unlockResult === "0" ? "Success" : "Failure");
-      unlockPromises.delete(deviceId);
-    }
-  } else {
-    console.error(`No promise found for device ID ${deviceId}`);
-  }
 
   // Construct and send the acknowledgment command back to the IoT lock
   const acknowledgmentCommand = createCommand(
@@ -253,56 +173,78 @@ function handleUnlockCommand(deviceId, commandContent, socket) {
   const command = createCommand(deviceId, CommandType.UNLOCK, commandContent);
   console.log(`Sending unlock command to IoT lock: ${command}`);
   sendCommand(command, socket);
+}
 
-  return new Promise((resolve, reject) => {
-    // Ensure to handle promises only once per device ID
-    if (unlockPromises.has(deviceId)) {
-      reject(new Error("Another unlock command is still pending."));
-      return;
-    }
+function handleLockResponse(parts) {
+  const deviceId = parts[2];
+  const userId = parts[5]; // User ID from the lock response
+  const operationTimestamp = parts[6]; // Timestamp from the lock response
+  const rideTime = parts[7].split("#")[0]; // Ride time in minutes from the lock response
 
-    unlockPromises.set(deviceId, { resolve, reject });
+  console.log(
+    `Lock response received. User ID: ${userId}, Timestamp: ${operationTimestamp}, Ride time: ${rideTime} minutes`
+  );
 
-    // Listen for the response from the IoT device
-    socket.once("data", (data) => {
-      const response = data.toString().trim();
-      console.log(`Received response from IoT lock: ${response}`);
+  // Construct and send the acknowledgment command back to the IoT lock
+  const acknowledgmentCommand = createCommand(deviceId, "Re", CommandType.LOCK);
+  console.log(`Sending acknowledgment to IoT lock: ${acknowledgmentCommand}`);
 
-      if (response.startsWith("*CMDR")) {
-        const responseParts = response.split(",");
-        const unlockResult = responseParts[5];
-        const responseUserId = responseParts[6];
-        const responseTimestamp = responseParts[7].split("#")[0];
+  // Return the acknowledgment command to be sent
+  return acknowledgmentCommand;
+}
 
-        console.log(
-          `Unlock result: ${
-            unlockResult === "0" ? "Success" : "Failure"
-          }, User ID: ${responseUserId}, Timestamp: ${responseTimestamp}`
-        );
+function handleRequestPositioningResponse(parts) {
+  const deviceId = parts[2];
+  const commandStatus = parts[5];
+  const utcTime = parts[6];
+  const locationStatus = parts[7];
+  const latitude = parseFloat(parts[8]);
+  const latHemisphere = parts[9];
+  const longitude = parseFloat(parts[10]);
+  const lonHemisphere = parts[11];
+  const satellites = parseInt(parts[12]);
+  const hdop = parseFloat(parts[13]);
+  const utcDate = parts[14];
+  const altitude = parseInt(parts[15]);
+  const altitudeUnit = parts[16];
+  const mode = parts[17].split("#")[0];
 
-        if (unlockPromises.has(deviceId)) {
-          const { resolve } = unlockPromises.get(deviceId);
-          resolve(unlockResult === "0" ? "Success" : "Failure");
-          unlockPromises.delete(deviceId);
-        }
-      } else {
-        if (unlockPromises.has(deviceId)) {
-          const { reject } = unlockPromises.get(deviceId);
-          reject(new Error("Unexpected response"));
-          unlockPromises.delete(deviceId);
-        }
-      }
-    });
+  // Convert latitude and longitude to WGS84 format
+  const lat = latitude / 100;
+  const lon = longitude / 100;
 
-    // Timeout handling
-    setTimeout(() => {
-      if (unlockPromises.has(deviceId)) {
-        const { reject } = unlockPromises.get(deviceId);
-        reject(new Error("Unlock command timed out"));
-        unlockPromises.delete(deviceId);
-      }
-    }, 10000); // 10 seconds timeout
-  });
+  // Apply hemisphere correction
+  const latWGS84 = latHemisphere === "N" ? lat : -lat;
+  const lonWGS84 = lonHemisphere === "E" ? lon : -lon;
+
+  console.log(`Positioning response received from device ${deviceId}:`);
+  console.log(`Command Status: ${commandStatus}`);
+  console.log(`UTC Time: ${utcTime}`);
+  console.log(`Location Status: ${locationStatus}`);
+  console.log(`Latitude: ${latWGS84}`);
+  console.log(`Longitude: ${lonWGS84}`);
+  console.log(`Satellites: ${satellites}`);
+  console.log(`HDOP: ${hdop}`);
+  console.log(`UTC Date: ${utcDate}`);
+  console.log(`Altitude: ${altitude} ${altitudeUnit}`);
+  console.log(`Mode: ${mode}`);
+
+  // Construct and send acknowledgment command
+  const acknowledgmentCommand = createCommand(
+    deviceId,
+    "Re",
+    CommandType.REQUEST_POSITIONING
+  );
+  console.log(`Sending acknowledgment to IoT lock: ${acknowledgmentCommand}`);
+
+  // Return the acknowledgment command to be sent
+  return acknowledgmentCommand;
+}
+
+function handleRequestPositioningCommand(deviceId, socket) {
+  const command = createCommand(deviceId, CommandType.REQUEST_POSITIONING);
+  console.log(`Sending positioning request command to IoT lock: ${command}`);
+  sendCommand(command, socket);
 }
 
 // Express API endpoint to handle unlock requests
@@ -313,13 +255,9 @@ app.post("/unlock", async (req, res) => {
   const socket = deviceSockets.get(deviceId);
   if (socket) {
     try {
-      // Send the unlock command and wait for the response
-      const result = await handleUnlockCommand(
-        deviceId,
-        commandContent,
-        socket
-      );
-      res.status(200).json({ message: `Unlock command result: ${result}` });
+      // Send the unlock command
+      handleUnlockCommand(deviceId, commandContent, socket);
+      res.status(200).json({ message: "Unlock command sent" });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -328,24 +266,23 @@ app.post("/unlock", async (req, res) => {
   }
 });
 
-function handleLockResponse(parts) {
-  const deviceId = parts[2];
-  const userId = parts[5]; // User ID from the lock response
-  const timestamp = parts[6].split("#")[0]; // Timestamp from the lock response
-  const rideTime = parts[7]; // Ride time in minutes from the lock response
-
-  console.log(
-    `Lock response received. User ID: ${userId}, Timestamp: ${timestamp}, Ride time: ${rideTime} minutes`
-  );
-
-  // Construct and send the acknowledgment command back to the IoT lock
-  const acknowledgmentCommand = createCommand(deviceId, "Re", CommandType.LOCK);
-  console.log(`Sending acknowledgment to IoT lock: ${acknowledgmentCommand}`);
-
-  // Return the acknowledgment command to be sent
-  return acknowledgmentCommand;
-}
+// Express API endpoint to handle positioning requests
+app.post("/location", async (req, res) => {
+  const { deviceId } = req.body;
   
+  const socket = deviceSockets.get(deviceId);
+  if (socket) {
+    try {
+      // Send the positioning request command
+      handleRequestPositioningCommand(deviceId, socket);
+      res.status(200).json({ message: "Positioning request sent" });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  } else {
+    res.status(404).json({ error: "Device not connected" });
+  }
+});
 
 // Add similar functions for other commands...
 
