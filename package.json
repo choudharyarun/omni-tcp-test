@@ -1,5 +1,5 @@
 {
-  "name": "omni-tcp-test",
+  "name": "omni-tcp",
   "version": "1.0.0",
   "description": "Omni OC32 TCP communication",
   "main": "index.js",
@@ -9,6 +9,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.19.2"
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "firebase-admin": "^12.3.1",
+    "socket.io": "^4.7.5"
   }
 }
